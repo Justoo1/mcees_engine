@@ -1,0 +1,55 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum WebhookSource {
+  SHOPIFY
+  WOOCOMMERCE
+}
+
+enum WebhookStatus {
+  RECEIVED
+  PROCESSING
+  SYNCED
+  FAILED
+}
+
+enum LogLevel {
+  INFO
+  WARN
+  ERROR
+}
+
+model WebhookEvent {
+  id          String        @id @default(uuid())
+  source      WebhookSource
+  event_type  String
+  external_id String
+  raw_payload Json
+  status      WebhookStatus @default(RECEIVED)
+  created_at  DateTime      @default(now())
+  updated_at  DateTime      @updatedAt
+
+  logs SyncLog[]
+
+  @@unique([source, external_id])
+  @@index([status])
+  @@index([created_at])
+}
+
+model SyncLog {
+  id               String       @id @default(uuid())
+  webhook_event_id String
+  message          String
+  level            LogLevel     @default(INFO)
+  created_at       DateTime     @default(now())
+
+  event WebhookEvent @relation(fields: [webhook_event_id], references: [id], onDelete: Cascade)
+
+  @@index([webhook_event_id])
+}

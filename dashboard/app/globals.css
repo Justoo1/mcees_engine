@@ -1,0 +1,12 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: #FAFAFA;
+}
+
+body {
+  background-color: var(--background);
+  color: theme('colors.slate.800');
+}
