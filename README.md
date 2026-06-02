@@ -2,6 +2,28 @@
 
 > A production-grade async integration middleware that bridges Shopify and WooCommerce webhooks to an Odoo 17 ERP — built to handle high-frequency event spikes without overwhelming the ERP backend.
 
+![CI](https://img.shields.io/badge/CI-passing-brightgreen) ![Tests](https://img.shields.io/badge/tests-33%20backend%20%2B%2012%20dashboard-blue) ![Python](https://img.shields.io/badge/python-3.12-blue) ![Next.js](https://img.shields.io/badge/Next.js-16-black) ![License](https://img.shields.io/badge/license-MIT-green)
+
+---
+
+## Screenshots
+
+> _Replace these placeholders with real captures from your running stack._
+
+| Sync timeline (live, 5s auto-refresh) | Event detail drawer |
+|---|---|
+| ![Timeline placeholder](docs/screenshots/timeline.png) | ![Drawer placeholder](docs/screenshots/drawer.png) |
+
+| Queues & workers | Sign-in (RBAC) |
+|---|---|
+| ![Queues placeholder](docs/screenshots/queues.png) | ![Login placeholder](docs/screenshots/login.png) |
+
+How to capture them:
+1. `make up` and `make db-seed` (creates the admin user)
+2. Log in at `http://localhost:3000`, run a few webhooks via `make webhook-shopify-order`
+3. Screenshot each view; save under `docs/screenshots/` with the names above
+4. (Optional) record a 60-second flow as `docs/demo.gif` and link it here
+
 ---
 
 ## Overview
@@ -13,7 +35,7 @@ E-commerce platforms fire webhooks in bursts: a flash sale can generate hundreds
 1. A **FastAPI** ingestion layer validates HMAC signatures, writes an audit record, and immediately returns `202 Accepted`
 2. Events are pushed onto a **Redis-backed Celery** queue, smoothing out traffic spikes
 3. Dedicated workers process each event type — orders, customers, inventory — against **Odoo 17 via XML-RPC**, with exponential backoff retries and distributed locking for concurrent writes
-4. A **Next.js** admin dashboard gives real-time visibility into every event: status, raw payload, full sync log, and a one-click retry button
+4. A **Next.js 16** admin dashboard gives real-time visibility into every event — sync timeline, queue depth and worker stats, failure replay, health probes, and editable connector config — all behind a **JWT auth layer with role-based access control** (ADMIN / OPERATOR / VIEWER) enforced both by the Next.js proxy *and* per-route on every mutating endpoint
 
 ```
 Shopify / WooCommerce
@@ -69,22 +91,34 @@ Incoming product webhooks carry a quantity delta, not an absolute target. The wo
 ### Strict SKU-Only Matching
 Products are resolved in Odoo by `default_code` (internal reference / SKU) only. There is no fuzzy name matching. Order lines with no matching SKU are skipped and logged as warnings rather than blocking the whole order. This makes data integrity issues visible without causing silent failures.
 
+### Role-Based Access Control (Defense in Depth)
+The dashboard sits behind a JWT cookie session (`jose`, HS256, httpOnly, SameSite=Lax). Three roles are enforced — `VIEWER` (read-only), `OPERATOR` (can retry / replay / simulate), `ADMIN` (full configure + reveal secrets). Authorization is checked in **two independent places**:
+
+1. **Edge layer** — `dashboard/proxy.ts` (Next.js 16's replacement for `middleware.ts`) verifies the session on every request and redirects unauthenticated traffic to `/login` (or `401`s API calls)
+2. **Route layer** — every mutating route handler calls `requireRole(min)` server-side, so even a forged client-side state can't bypass authorization
+
+The UI also hides controls the user can't use (Replay button disabled for VIEWER, Connectors nav hidden for non-ADMINs) — but the server-side check is the source of truth, not the UI.
+
+The first user to sign up is automatically promoted to `ADMIN`; subsequent signups default to `VIEWER` and must be elevated explicitly. Passwords are hashed with bcrypt (12 rounds).
+
 ---
 
 ## Tech Stack
 
 | Layer | Technology |
 |---|---|
-| API | Python 3.11, FastAPI, uvicorn |
+| API | Python 3.12, FastAPI, uvicorn |
 | Task queue | Celery 5, Redis 7 |
 | Database | PostgreSQL 16 (asyncpg in API, psycopg2 in workers) |
 | ORM (dashboard) | Prisma ORM (TypeScript) |
 | ERP integration | Odoo 17 XML-RPC (`xmlrpc.client`) |
-| Dashboard | Next.js 14 (App Router), TypeScript, Tailwind CSS, SWR |
+| Dashboard | Next.js 16 (App Router), React 19, TypeScript, Tailwind CSS, SWR |
+| Auth | bcrypt + `jose` JWT (httpOnly cookie) + Next.js `proxy.ts` |
 | Containerisation | Docker, Docker Compose |
 | Packaging | uv, Hatchling (PEP 517) |
 | Linting / types | Ruff, Pyright (backend) · TypeScript strict mode (frontend) |
-| Testing | pytest, pytest-asyncio, pytest-mock |
+| Testing | pytest (backend, 33 cases) · vitest (dashboard auth, 12 cases) |
+| CI | GitHub Actions — backend pytest + dashboard vitest + Next.js build |
 
 ---
 
@@ -222,13 +256,19 @@ make logs-worker
 
 ## Dashboard Features
 
-| Feature | Detail |
-|---|---|
-| **Live sync timeline** | Auto-refreshes every 5 seconds via SWR; filterable by source and status |
-| **KPI cards** | Total events, synced, failed, and average processing time — all scoped to the last 24 hours |
-| **Event detail drawer** | Raw JSON payload, full timestamped sync log with INFO / WARN / ERROR levels |
-| **Retry button** | Re-enqueues any `FAILED` event with one click; shows disabled "Retrying…" state while processing |
-| **Pagination** | 20 events per page with prev / next controls |
+| Feature | Detail | Min role |
+|---|---|---|
+| **Live sync timeline** | Auto-refreshes every 5 seconds via SWR; filterable by source and status | VIEWER |
+| **KPI cards** | Total events, synced, failed, and average processing time (24h window) | VIEWER |
+| **Event detail drawer** | Raw JSON payload + full timestamped sync log (INFO / WARN / ERROR) | VIEWER |
+| **Architecture view** | Live diagram of API → Redis → Workers → Odoo with per-edge status | VIEWER |
+| **Queues view** | Real-time depth of `orders` / `customers` / `inventory` queues plus per-worker active/reserved counts | VIEWER |
+| **Failures view** | Filterable list of FAILED events with bulk-replay action | VIEWER (view), OPERATOR (replay) |
+| **System health view** | Redis ping + Odoo XML-RPC auth latency probe | VIEWER |
+| **Retry button** | Re-enqueues any `FAILED` event with one click | OPERATOR |
+| **Replay all failed** | Bulk re-enqueue of every FAILED event in one action | OPERATOR |
+| **Connector settings** | Edit Shopify / WooCommerce / Odoo connection details from the UI; secrets revealed via separate endpoint | ADMIN |
+| **Sign in / sign out** | Email + password, JWT cookie, 7-day expiry; first user becomes ADMIN | — |
 
 ---
 
@@ -263,6 +303,9 @@ make db-studio          # Open Prisma Studio on port 5555
 | `SHOPIFY_WEBHOOK_SECRET` | Shopify webhook signing secret |
 | `WOOCOMMERCE_WEBHOOK_SECRET` | WooCommerce webhook signing secret |
 | `MAX_PAYLOAD_BYTES` | Max accepted body size (default: 1 MB) |
+| `AUTH_SECRET` | JWT signing key for dashboard sessions — must be ≥ 32 chars. Generate with `openssl rand -hex 32` |
+| `SEED_ADMIN_EMAIL` | (optional) email for the seed admin user. Default: `admin@mcees.local` |
+| `SEED_ADMIN_PASSWORD` | (optional) password for the seed admin user. Default: `admin12345` — change before any real demo |
 
 ---
 
@@ -277,6 +320,80 @@ make db-studio          # Open Prisma Studio on port 5555
 7. Status set to `SYNCED`; full log written
 
 On any exception the task retries up to 5 times with exponential backoff. After max retries, `on_failure` sets `status=FAILED` and writes an ERROR log — surfaced in the dashboard for manual retry.
+
+---
+
+## How Authentication Works
+
+1. User submits credentials to `POST /api/auth/login` (or `/signup` for first-time accounts)
+2. Server looks up the user, verifies the password with bcrypt (`compare` is constant-time)
+3. On success, a JWT is signed with `jose` (HS256, 7-day expiry) carrying `{sub, email, name, role}`
+4. JWT is returned as an `httpOnly`, `SameSite=Lax`, `Secure` (prod) cookie named `mcees_session`
+5. Every subsequent request flows through `dashboard/proxy.ts`, which:
+   - Reads the cookie, verifies the JWT, and exposes the session
+   - Redirects unauthenticated browser traffic to `/login?next=<original>`
+   - Returns `401 {error: "unauthenticated"}` for unauthenticated `/api/*` calls
+6. Mutating route handlers additionally call `requireRole(min)` — even if the proxy is misconfigured or bypassed, the route returns `403 {error: "forbidden", requiredRole: "..."}`
+7. Logout clears the cookie via `Set-Cookie: mcees_session=; Max-Age=0`
+
+The first user to sign up is promoted to `ADMIN`; subsequent signups default to `VIEWER`. Promote others via `prisma studio` or a direct SQL `UPDATE`.
+
+---
+
+## Testing
+
+```bash
+# Backend
+make test                          # pytest, 33 cases
+make test-cov                      # with coverage report
+
+# Dashboard (auth + permissions)
+make test-dashboard                # vitest, 12 cases
+cd dashboard && npm run test:watch # watch mode
+```
+
+CI runs both suites plus a production Next.js build on every push and PR — see `.github/workflows/ci.yml`.
+
+---
+
+## Design Decisions & Trade-offs
+
+| Decision | Alternative considered | Why this won |
+|---|---|---|
+| Celery + Redis | RQ, Dramatiq | Mature ecosystem, battle-tested, monitoring built-in (`celery inspect`) |
+| JWT in httpOnly cookie | Bearer token in localStorage | XSS-resistant; browser script cannot read the credential |
+| `jose` (not `jsonwebtoken`) | `jsonwebtoken` | Edge-runtime safe, no native deps, actively maintained |
+| Custom auth (not NextAuth.js) | Auth.js v5 | Total control over the cookie/role model; fewer moving parts to explain in interview |
+| bcrypt (12 rounds) | argon2id | Wider deployment, fine for non-credential-stuffing-targeted internal tool. argon2id would win for a public consumer service |
+| Strict SKU matching (no fuzzy) | Levenshtein fallback | Wrong product is worse than no product — visible warnings beat silent mis-syncs |
+| Additive inventory updates | Absolute targets | Webhooks deliver deltas; absolute targets corrupt counts under reordering |
+| Defense-in-depth (proxy + per-route) | Proxy only | Next.js docs explicitly warn that proxy matcher refactors can silently drop coverage |
+| Prisma + raw asyncpg | Prisma everywhere | Python workers don't need an ORM; raw SQL is faster and the schema is small |
+
+---
+
+## What I'd Do Next
+
+- [ ] Argon2id migration for new passwords (hash field already supports either via prefix detection)
+- [ ] OAuth providers (Google / GitHub) alongside credentials
+- [ ] Refresh-token rotation (current sessions are stateless 7-day JWTs)
+- [ ] OpenTelemetry tracing across FastAPI → Celery → Odoo XML-RPC
+- [ ] Saga pattern for multi-step Odoo transactions (currently each task is atomic but cross-task rollback is manual)
+- [ ] WebSocket push for dashboard timeline (currently 5s SWR polling)
+- [ ] Per-tenant isolation (multi-shop deployment)
+- [ ] Load test with k6 to confirm the ~500 events/min/worker target
+
+---
+
+## Deployment Notes
+
+The project is Docker-Compose-ready out of the box. For a public demo:
+
+- **Railway** — point at `docker-compose.yml`, set the env vars from `.env.example` in the dashboard, and add Postgres + Redis plugins. Railway exposes the dashboard service publicly; keep the API internal.
+- **Fly.io** — one `fly launch` per service (`api`, `worker`, `dashboard`) plus a Fly Postgres and Upstash Redis. Use Fly secrets for `AUTH_SECRET` and Odoo creds.
+- **Self-hosted (docker compose on a VPS)** — terminate TLS at Caddy or nginx in front of the `dashboard` service. Set `NODE_ENV=production` so cookies become `Secure`.
+
+In all cases, rotate `AUTH_SECRET` per environment — JWTs signed with one secret cannot be verified by another, so leaking the staging secret doesn't compromise prod.
 
 ---
 
