@@ -332,3 +332,17 @@ clean-docker:
 	@echo "WARNING: This removes all project containers and volumes."
 	@read -p "Are you sure? [y/N] " confirm && [ "$$confirm" = "y" ]
 	$(DC) down --volumes --remove-orphans
+
+
+# ── Dashboard tests & auth seed ──────────────────────────────
+
+.PHONY: test-dashboard
+test-dashboard:
+	cd $(DASHBOARD_DIR) && npm test
+
+.PHONY: test-all
+test-all: test test-dashboard
+
+.PHONY: db-seed
+db-seed:
+	cd $(DASHBOARD_DIR) && npm run db:seed
