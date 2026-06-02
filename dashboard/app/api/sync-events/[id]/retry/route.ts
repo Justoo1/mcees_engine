@@ -1,10 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { requireRole } from "@/lib/auth/permissions";
 
 export async function POST(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const { error } = await requireRole("OPERATOR");
+  if (error) return error;
+
   const { id } = await params;
   const event = await prisma.webhookEvent.findUnique({ where: { id } });
 

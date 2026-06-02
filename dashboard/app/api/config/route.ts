@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { requireRole } from '@/lib/auth/permissions'
 
 // All editable config keys. Secrets are stored in the database so they can be
 // updated from the UI without touching the .env file. DATABASE_URL stays in .env.
@@ -78,6 +79,8 @@ export async function GET() {
 }
 
 export async function PATCH(req: NextRequest) {
+  const { error } = await requireRole("ADMIN");
+  if (error) return error;
   try {
     const body = await req.json() as Record<string, unknown>
     const updates = Object.entries(body).filter(([k]) => ALLOWED_KEYS.has(k))

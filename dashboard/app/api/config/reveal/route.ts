@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { requireRole } from '@/lib/auth/permissions'
 
 const ALLOWED = new Set(['shopify_webhook_secret', 'woocommerce_webhook_secret', 'odoo_password'])
 
 export async function POST(req: NextRequest) {
+  const { error } = await requireRole("ADMIN");
+  if (error) return error;
   try {
     const { key } = await req.json() as { key: string }
 

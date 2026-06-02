@@ -25,6 +25,26 @@ enum LogLevel {
   ERROR
 }
 
+enum UserRole {
+  ADMIN
+  OPERATOR
+  VIEWER
+}
+
+model User {
+  id            String   @id @default(uuid())
+  email         String   @unique
+  password_hash String
+  name          String
+  role          UserRole @default(VIEWER)
+  is_active     Boolean  @default(true)
+  last_login_at DateTime?
+  created_at    DateTime @default(now())
+  updated_at    DateTime @updatedAt
+
+  @@index([email])
+}
+
 model WebhookEvent {
   id          String        @id @default(uuid())
   source      WebhookSource

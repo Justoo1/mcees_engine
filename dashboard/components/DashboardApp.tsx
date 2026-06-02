@@ -12,6 +12,8 @@ import { QueuesView } from '@/components/QueuesView'
 import { FailuresView } from '@/components/FailuresView'
 import { SystemHealthView } from '@/components/SystemHealthView'
 import { ShortcutsModal } from '@/components/ShortcutsModal'
+import { UserMenu, type CurrentUser } from '@/components/UserMenu'
+import { can } from '@/lib/auth/permissions'
 import { useTweaks, TweaksPanel, TweakSection, TweakSlider, TweakRadio, TweakColor } from '@/components/TweaksPanel'
 import { makeFeedItem, type MockEvent, type FeedItem, type SparklineData } from '@/lib/mockData'
 import { fetchEvents, fetchStats, retryEvent, fetchQueues, fetchHealth, type ApiStats, type QueuesResponse, type HealthResponse } from '@/lib/api'
@@ -49,7 +51,9 @@ function pollInterval(liveSpeed: number) {
   return Math.max(3000, 18000 - liveSpeed * 3000)
 }
 
-export function DashboardApp() {
+export function DashboardApp({ currentUser }: { currentUser: CurrentUser }) {
+  const canWrite     = can.retry(currentUser.role)
+  const canConfigure = can.configure(currentUser.role)
   const [t, setTweak] = useTweaks(TWEAK_DEFAULTS)
 
   useEffect(() => { applyTheme(t.theme as string, t.density as string, t.accent as string) }, [t.theme, t.density, t.accent])
@@ -263,9 +267,11 @@ export function DashboardApp() {
         </div>
 
         <div className="navsection">Configuration</div>
-        <div className={`navitem ${route === 'settings' ? 'active' : ''}`} onClick={() => setRoute('settings')}>
-          <Ic.cog className="ic" /> Connectors
-        </div>
+        {canConfigure && (
+          <div className={`navitem ${route === 'settings' ? 'active' : ''}`} onClick={() => setRoute('settings')}>
+            <Ic.cog className="ic" /> Connectors
+          </div>
+        )}
         <div className={`navitem ${route === 'health' ? 'active' : ''}`} onClick={() => setRoute('health')}>
           <Ic.health className="ic" /> System health
         </div>
@@ -310,9 +316,15 @@ export function DashboardApp() {
         <button className="iconbtn" title="Keyboard shortcuts (?)" onClick={() => setShortcuts(true)}>
           <Ic.kbd />
         </button>
-        <button className="btn primary" onClick={onReplayAll} disabled={counts.failed === 0}>
+        <button
+          className="btn primary"
+          onClick={onReplayAll}
+          disabled={counts.failed === 0 || !canWrite}
+          title={canWrite ? undefined : 'Requires OPERATOR or ADMIN role'}
+        >
           <Ic.retry /> Replay {counts.failed} failed
         </button>
+        <UserMenu user={currentUser} />
       </header>
 
       {/* Main content */}
@@ -367,10 +379,10 @@ export function DashboardApp() {
         {route === 'health' && (
           <SystemHealthView health={healthData} loading={!healthData} />
         )}
-        {route === 'settings' && <SettingsView />}
+        {route === 'settings' && canConfigure && <SettingsView />}
       </main>
 
-      {selected && <EventDrawer event={selected} onClose={() => setSelected(null)} onRetry={onRetry} />}
+      {selected && <EventDrawer event={selected} onClose={() => setSelected(null)} onRetry={onRetry} canRetry={canWrite} />}
       {shortcuts && <ShortcutsModal onClose={() => setShortcuts(false)} />}
 
       {toast && (

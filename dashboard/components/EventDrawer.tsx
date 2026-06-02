@@ -226,10 +226,11 @@ function OdooTab({ event }: { event: MockEvent }) {
 
 type DrawerTab = 'overview' | 'payload' | 'log' | 'odoo'
 
-export function EventDrawer({ event, onClose, onRetry }: {
+export function EventDrawer({ event, onClose, onRetry, canRetry: roleCanRetry = true }: {
   event: MockEvent | null
   onClose: () => void
   onRetry: (ev: MockEvent) => void
+  canRetry?: boolean
 }) {
   const [tab, setTab]         = useState<DrawerTab>('overview')
   const [retrying, setRetrying] = useState(false)
@@ -267,7 +268,8 @@ export function EventDrawer({ event, onClose, onRetry }: {
     setRetrying(true)
     setTimeout(() => { setRetrying(false); onRetry(event) }, 1700)
   }
-  const canRetry = event.status === 'FAILED' || event.status === 'RETRYING'
+  const isRetryable = event.status === 'FAILED' || event.status === 'RETRYING'
+  const canRetry = isRetryable && roleCanRetry
 
   return (
     <>
@@ -334,7 +336,15 @@ export function EventDrawer({ event, onClose, onRetry }: {
                 : <><Ic.retry />Retry sync</>}
             </button>
           ) : (
-            <button className="btn" disabled>{event.status === 'SYNCED' ? 'Already synced' : 'In progress…'}</button>
+            <button
+              className="btn"
+              disabled
+              title={isRetryable && !roleCanRetry ? 'Requires OPERATOR or ADMIN role' : undefined}
+            >
+              {isRetryable && !roleCanRetry
+                ? 'Read-only'
+                : event.status === 'SYNCED' ? 'Already synced' : 'In progress…'}
+            </button>
           )}
         </div>
       </aside>

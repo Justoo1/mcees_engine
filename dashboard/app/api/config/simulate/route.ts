@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createHmac } from 'crypto'
 import { prisma } from '@/lib/prisma'
+import { requireRole } from '@/lib/auth/permissions'
 
 type Source    = 'SHOPIFY' | 'WOOCOMMERCE'
 type EventType = 'order' | 'customer' | 'inventory'
@@ -80,6 +81,8 @@ function buildWooPayload(evType: EventType, id: number, now: string, f: Record<s
 }
 
 export async function POST(req: NextRequest) {
+  const { error } = await requireRole("OPERATOR");
+  if (error) return error;
   try {
     const { source, event_type, fields = {} } = await req.json() as {
       source:     Source
