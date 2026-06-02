@@ -33,3 +33,6 @@ Thumbs.db
 ui-context.md
 progress-tracker.md
 code-standards.md
+/package-lock.json
+/.vscode/
+/dashboard/tsconfig.tsbuildinfo
