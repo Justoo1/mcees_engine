@@ -53,3 +53,12 @@ model SyncLog {
 
   @@index([webhook_event_id])
 }
+
+// Editable connector / sync-rule configuration stored in the database.
+// Secrets (webhook signing keys, Odoo password) are never stored here —
+// they are read-only from the backend environment via the /api/config/reveal route.
+model AppConfig {
+  key        String   @id
+  value      String
+  updated_at DateTime @updatedAt
+}
