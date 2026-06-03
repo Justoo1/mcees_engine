@@ -207,13 +207,17 @@ SHOPIFY_WEBHOOK_SECRET=your_shopify_secret
 WOOCOMMERCE_WEBHOOK_SECRET=your_woocommerce_secret
 ```
 
-### 2. Start all services
+### 2. Start the dev stack
 
 ```bash
-make up
+make dev          # foreground, hot-reload, exposed DB ports
+# or
+make dev-detached # background
 ```
 
-This builds and starts five containers: `postgres`, `redis`, `api`, `worker`, and `dashboard`. The dashboard runs Prisma migrations automatically on startup.
+This layers `docker-compose.dev.yml` on top of the production base
+`docker-compose.yml`, giving you bind-mounted source for hot reload
+(api + dashboard) and exposed Postgres/Redis ports on the host.
 
 ### 3. Verify
 
@@ -222,6 +226,20 @@ make health        # → {"status": "ok"}
 ```
 
 Open [http://localhost:3000](http://localhost:3000) for the admin dashboard.
+
+### Running the production stack locally
+
+To smoke-test exactly what runs in production (including Caddy + TLS):
+
+```bash
+cp .env.production.example .env
+# fill in PUBLIC_DOMAIN, AUTH_SECRET, POSTGRES_PASSWORD, etc.
+make prod-up
+```
+
+This starts the same stack you would deploy to a server — built images,
+no bind mounts, restart policies, resource limits, Caddy fronting
+everything on 80/443.
 
 ---
 
@@ -387,13 +405,35 @@ CI runs both suites plus a production Next.js build on every push and PR — see
 
 ## Deployment Notes
 
-The project is Docker-Compose-ready out of the box. For a public demo:
+The repo ships with two compose files:
 
-- **Railway** — point at `docker-compose.yml`, set the env vars from `.env.example` in the dashboard, and add Postgres + Redis plugins. Railway exposes the dashboard service publicly; keep the API internal.
-- **Fly.io** — one `fly launch` per service (`api`, `worker`, `dashboard`) plus a Fly Postgres and Upstash Redis. Use Fly secrets for `AUTH_SECRET` and Odoo creds.
-- **Self-hosted (docker compose on a VPS)** — terminate TLS at Caddy or nginx in front of the `dashboard` service. Set `NODE_ENV=production` so cookies become `Secure`.
+- `docker-compose.yml` — production base: restart policies, resource limits,
+  Caddy reverse proxy with auto-TLS, no source bind mounts, `--workers 2`
+  uvicorn, Celery `--concurrency=4`, required env-var guards
+- `docker-compose.dev.yml` — local-dev overlay: hot reload, exposed DB ports,
+  bind-mounted source, `next dev` instead of the standalone build
 
-In all cases, rotate `AUTH_SECRET` per environment — JWTs signed with one secret cannot be verified by another, so leaking the staging secret doesn't compromise prod.
+**Recommended free production target:** Oracle Cloud Always Free
+(4 vCPU ARM, 24 GB RAM, $0 forever). Step-by-step runbook in
+[docs/DEPLOY_ORACLE_CLOUD.md](docs/DEPLOY_ORACLE_CLOUD.md).
+
+**Other tested targets:**
+- **Railway / Fly.io** (~$5/month) — easiest hosted; one project, services
+  per Dockerfile. See the Railway-specific notes in `docs/DEPLOY_ORACLE_CLOUD.md`
+  appendix for env-var wiring.
+- **Any VPS with Docker** — `docker compose up -d` runs the production
+  stack as-is. Point a DNS record at the VM, set `PUBLIC_DOMAIN` +
+  `ACME_EMAIL` in `.env`, and Caddy will provision a Let's Encrypt cert
+  on first request.
+
+**Per-environment hygiene:**
+- Always rotate `AUTH_SECRET` per environment — JWTs signed with one
+  secret cannot be verified by another, so leaking the staging secret
+  doesn't compromise prod
+- Set `NODE_ENV=production` in the dashboard service so cookies become
+  `Secure` (the prod compose does this automatically)
+- Never commit `.env` (already in `.gitignore`); use `.env.production.example`
+  as the template on the server
 
 ---
 

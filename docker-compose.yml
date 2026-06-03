@@ -1,9 +1,21 @@
+# Production-grade base stack.
+#
+# Run as-is for production:
+#   docker compose up -d
+#
+# Layer the dev override for local development:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+#
+# In prod, only Caddy is published to the internet (ports 80/443).
+# All other services communicate over the internal app_network only.
+
 services:
   postgres:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-mcees}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mcees}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required in prod}
       POSTGRES_DB: ${POSTGRES_DB:-mcees_db}
     volumes:
       - postgres_data:/var/lib/postgresql/data
@@ -11,34 +23,40 @@ services:
       - app_network
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-mcees} -d ${POSTGRES_DB:-mcees_db}"]
-      interval: 5s
+      interval: 10s
       timeout: 5s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 1g
 
   redis:
     image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
     volumes:
       - redis_data:/data
     networks:
       - app_network
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
+      interval: 10s
       timeout: 5s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 384m
 
   api:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
-    ports:
-      - "8000:8000"
-    volumes:
-      - ./backend:/app
+    restart: unless-stopped
     env_file: .env
     environment:
-      POSTGRES_URL: postgresql://${POSTGRES_USER:-mcees}:${POSTGRES_PASSWORD:-mcees}@postgres:5432/${POSTGRES_DB:-mcees_db}
+      POSTGRES_URL: postgresql://${POSTGRES_USER:-mcees}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-mcees_db}
       REDIS_URL: redis://redis:6379/0
     depends_on:
       postgres:
@@ -47,17 +65,26 @@ services:
         condition: service_healthy
     networks:
       - app_network
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health',timeout=2).status==200 else 1)\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          memory: 512m
 
   worker:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    command: celery -A workers.celery_app worker --loglevel=info --queues=orders,customers,inventory
-    volumes:
-      - ./backend:/app
+    restart: unless-stopped
+    command: ["celery", "-A", "workers.celery_app", "worker", "--loglevel=info", "--queues=orders,customers,inventory", "--concurrency=4"]
     env_file: .env
     environment:
-      POSTGRES_URL: postgresql://${POSTGRES_USER:-mcees}:${POSTGRES_PASSWORD:-mcees}@postgres:5432/${POSTGRES_DB:-mcees_db}
+      POSTGRES_URL: postgresql://${POSTGRES_USER:-mcees}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-mcees_db}
       REDIS_URL: redis://redis:6379/0
     depends_on:
       postgres:
@@ -66,17 +93,22 @@ services:
         condition: service_healthy
     networks:
       - app_network
+    deploy:
+      resources:
+        limits:
+          memory: 768m
 
   dashboard:
     build:
       context: ./dashboard
       dockerfile: Dockerfile
-    ports:
-      - "3000:3000"
+    restart: unless-stopped
     env_file: .env
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-mcees}:${POSTGRES_PASSWORD:-mcees}@postgres:5432/${POSTGRES_DB:-mcees_db}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-mcees}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-mcees_db}
       API_URL: http://api:8000
+      AUTH_SECRET: ${AUTH_SECRET:?AUTH_SECRET is required in prod}
+      NODE_ENV: production
     depends_on:
       postgres:
         condition: service_healthy
@@ -84,10 +116,45 @@ services:
         condition: service_started
     networks:
       - app_network
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:3000/login',r=>process.exit(r.statusCode<500?0:1)).on('error',()=>process.exit(1))\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+
+  # TLS-terminating reverse proxy. Routes:
+  #   ${PUBLIC_DOMAIN}            → dashboard:3000
+  #   api.${PUBLIC_DOMAIN}        → api:8000   (optional — only if you want
+  #                                              the FastAPI endpoint public)
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      PUBLIC_DOMAIN: ${PUBLIC_DOMAIN:?PUBLIC_DOMAIN is required in prod (e.g. mcees.example.com)}
+      ACME_EMAIL: ${ACME_EMAIL:?ACME_EMAIL is required for Let's Encrypt registration}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - dashboard
+    networks:
+      - app_network
 
 volumes:
   postgres_data:
   redis_data:
+  caddy_data:
+  caddy_config:
 
 networks:
   app_network:

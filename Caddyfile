@@ -1,0 +1,59 @@
+# Caddy reverse proxy with automatic Let's Encrypt TLS.
+# PUBLIC_DOMAIN and ACME_EMAIL are injected from .env via docker-compose.
+
+{
+    email {$ACME_EMAIL}
+    # Uncomment during initial debugging to avoid Let's Encrypt rate limits:
+    # acme_ca https://acme-staging-v02.api.letsencrypt.org/directory
+}
+
+# Main site → dashboard
+{$PUBLIC_DOMAIN} {
+    encode zstd gzip
+
+    # Block any direct access to /api/v1/webhooks/* through the dashboard host;
+    # webhooks should go to api.<domain> below.
+    @webhooks path /api/v1/webhooks/*
+    respond @webhooks "Use api.{$PUBLIC_DOMAIN} for webhook endpoints" 404
+
+    reverse_proxy dashboard:3000 {
+        header_up X-Forwarded-Proto {scheme}
+        header_up X-Real-IP {remote_host}
+    }
+
+    # Security headers
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        Permissions-Policy "geolocation=(), microphone=(), camera=()"
+        -Server
+    }
+
+    log {
+        output stdout
+        format console
+    }
+}
+
+# Webhook ingestion endpoint — Shopify/WooCommerce point here.
+# If you don't need a public FastAPI, delete this block.
+api.{$PUBLIC_DOMAIN} {
+    encode zstd gzip
+
+    # Only expose webhook + health publicly; everything else returns 404.
+    @public path /health /api/v1/webhooks/*
+    handle @public {
+        reverse_proxy api:8000
+    }
+    handle {
+        respond "Not found" 404
+    }
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        -Server
+    }
+}

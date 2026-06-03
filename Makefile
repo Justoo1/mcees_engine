@@ -346,3 +346,53 @@ test-all: test test-dashboard
 .PHONY: db-seed
 db-seed:
 	cd $(DASHBOARD_DIR) && npm run db:seed
+
+
+# ── Dev vs Prod docker ───────────────────────────────────────
+
+# Dev compose: base + dev override. Hot reload, exposed DB ports.
+DEV_COMPOSE := -f docker-compose.yml -f docker-compose.dev.yml
+
+.PHONY: dev
+dev:
+	$(DC) $(DEV_COMPOSE) up --build
+
+.PHONY: dev-detached
+dev-detached:
+	$(DC) $(DEV_COMPOSE) up --build -d
+
+.PHONY: dev-down
+dev-down:
+	$(DC) $(DEV_COMPOSE) down
+
+# Prod compose: base only. Caddy fronts everything on :80/:443.
+.PHONY: prod-up
+prod-up:
+	$(DC) up --build -d
+
+.PHONY: prod-down
+prod-down:
+	$(DC) down
+
+.PHONY: prod-logs
+prod-logs:
+	$(DC) logs -f --tail=100
+
+.PHONY: prod-ps
+prod-ps:
+	$(DC) ps
+
+.PHONY: prod-pull-deploy
+# Pull latest code, rebuild changed services, restart with zero downtime.
+prod-pull-deploy:
+	git pull --ff-only
+	$(DC) build
+	$(DC) up -d --no-deps --remove-orphans api worker dashboard
+
+.PHONY: prod-backup-db
+# Dumps the production DB to ./backups/<timestamp>.sql.gz
+prod-backup-db:
+	@mkdir -p backups
+	@ts=$$(date +%Y%m%d-%H%M%S); \
+	$(DC) exec -T postgres pg_dump -U $${POSTGRES_USER:-mcees} -d $${POSTGRES_DB:-mcees_db} | gzip > backups/$$ts.sql.gz; \
+	echo "Backup written to backups/$$ts.sql.gz"

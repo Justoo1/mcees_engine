@@ -1,0 +1,62 @@
+# Local-development overrides. Layer on top of docker-compose.yml:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+#
+# Or use the `make up` target which wraps this for you.
+#
+# Differences from prod:
+#   - Source code is bind-mounted so edits hot-reload (api) / autorestart (worker)
+#   - Postgres + Redis ports are exposed to the host for inspection
+#   - api runs with --reload, dashboard runs `next dev`
+#   - Caddy is not started (use the published ports directly)
+#   - No resource limits, no restart policy, no required env-var ?: guards
+
+services:
+  postgres:
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mcees}
+
+  redis:
+    ports:
+      - "6379:6379"
+
+  api:
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+    healthcheck:
+      disable: true
+
+  worker:
+    volumes:
+      - ./backend:/app
+    # Auto-restart on code change via watchmedo (optional; uncomment to enable)
+    # command: ["watchmedo", "auto-restart", "--directory=.", "--pattern=*.py", "--recursive", "--", "celery", "-A", "workers.celery_app", "worker", "--loglevel=info", "--queues=orders,customers,inventory"]
+
+  dashboard:
+    # Use the dev server with HMR instead of the built standalone bundle.
+    # This means we override the image entrypoint and bind-mount the source.
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile
+      target: deps
+    command: ["sh", "-c", "npm install && npx prisma generate && npm run dev"]
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./dashboard:/app
+      - /app/node_modules
+      - /app/.next
+    environment:
+      AUTH_SECRET: ${AUTH_SECRET:-dev_only_secret_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
+      NODE_ENV: development
+    healthcheck:
+      disable: true
+
+  # Don't start Caddy in dev — hit the services directly on their host ports.
+  caddy:
+    profiles: ["never"]
